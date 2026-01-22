@@ -18,13 +18,43 @@ on:
         required: false
         type: string
         default: 'bz2, ctype, curl, dom, fileinfo, gd, iconv, intl, json, libxml, mbstring, openssl, pcntl, posix, session, simplexml, xmlreader, xmlwriter, zip, zlib, sqlite, pdo_sqlite'
+      path-filters:
+        description: 'Paths to filter on (YAML format)'
+        required: false
+        type: string
+        default: |
+          - '**.php'
+          - '.php-cs-fixer.dist.php'
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              ${{ inputs.path-filters }}
+
   lint:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
 
     name: php-cs
 
@@ -51,3 +81,17 @@ jobs:
 
       - name: Lint
         run: ${{ inputs.cs-check-command }}
+
+  summary:
+    permissions:
+      contents: none
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+
+    if: always()
+
+    name: php-cs-summary
+
+    steps:
+      - name: Summary status
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.lint.result != 'success' }}; then exit 1; fi
