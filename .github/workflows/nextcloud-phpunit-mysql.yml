@@ -45,6 +45,7 @@ on:
           - 'composer.lock'
 
 permissions:
+  pull-requests: read
   contents: read
 
 jobs:
@@ -78,9 +79,6 @@ jobs:
 
   changes:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
 
     outputs:
       src: ${{ steps.changes.outputs.src}}
