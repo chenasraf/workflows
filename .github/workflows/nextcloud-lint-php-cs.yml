@@ -1,0 +1,53 @@
+# Reusable workflow for PHP code style linting
+#
+# SPDX-FileCopyrightText: 2022-2024 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Lint php-cs
+
+on:
+  workflow_call:
+    inputs:
+      cs-check-command:
+        description: 'Composer command to check code style'
+        required: false
+        type: string
+        default: "composer run cs:check || ( echo 'Please run `composer run cs:fix` to format your code' && exit 1 )"
+      php-extensions:
+        description: 'PHP extensions to install'
+        required: false
+        type: string
+        default: 'bz2, ctype, curl, dom, fileinfo, gd, iconv, intl, json, libxml, mbstring, openssl, pcntl, posix, session, simplexml, xmlreader, xmlwriter, zip, zlib, sqlite, pdo_sqlite'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    name: php-cs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get php version
+        id: versions
+        uses: icewind1991/nextcloud-version-matrix@v1
+
+      - name: Set up php${{ steps.versions.outputs.php-available }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ steps.versions.outputs.php-available }}
+          extensions: ${{ inputs.php-extensions }}
+          coverage: none
+          ini-file: development
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: composer i
+
+      - name: Lint
+        run: ${{ inputs.cs-check-command }}

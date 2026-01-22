@@ -1,0 +1,41 @@
+# Reusable workflow for Nextcloud appinfo.xml linting
+#
+# SPDX-FileCopyrightText: 2022-2024 Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Lint appinfo.xml
+
+on:
+  workflow_call:
+    inputs:
+      xml-file:
+        description: 'Path to the info.xml file'
+        required: false
+        type: string
+        default: './appinfo/info.xml'
+      schema-url:
+        description: 'URL to the XSD schema file'
+        required: false
+        type: string
+        default: 'https://raw.githubusercontent.com/nextcloud/appstore/master/nextcloudappstore/api/v1/release/info.xsd'
+
+permissions:
+  contents: read
+
+jobs:
+  xml-linters:
+    runs-on: ubuntu-latest
+
+    name: info.xml lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download schema
+        run: wget ${{ inputs.schema-url }} -O info.xsd
+
+      - name: Lint info.xml
+        uses: ChristophWurst/xmllint-action@v1
+        with:
+          xml-file: ${{ inputs.xml-file }}
+          xml-schema-file: ./info.xsd

@@ -1,0 +1,111 @@
+# Reusable workflow for Vitest frontend tests
+#
+# SPDX-FileCopyrightText: Chen Asraf <contact@casraf.dev>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Vitest
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '22'
+      test-command:
+        description: 'Command to run tests'
+        required: false
+        type: string
+        default: 'pnpm test:run'
+      path-filters:
+        description: 'Paths to filter on (YAML format)'
+        required: false
+        type: string
+        default: |
+          - '.github/workflows/**'
+          - 'src/**'
+          - 'tests/**'
+          - '*.ts'
+          - '*.js'
+          - '*.json'
+          - '*.yaml'
+          - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              ${{ inputs.path-filters }}
+
+  vitest:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
+
+    name: Vitest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: ${{ inputs.test-command }}
+
+  summary:
+    permissions:
+      contents: none
+    runs-on: ubuntu-latest
+    needs: [changes, vitest]
+
+    if: always()
+
+    name: vitest-summary
+
+    steps:
+      - name: Summary status
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.vitest.result != 'success' }}; then exit 1; fi

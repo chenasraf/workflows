@@ -1,0 +1,78 @@
+# Reusable workflow for OpenAPI spec linting
+#
+# SPDX-FileCopyrightText: Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Lint OpenAPI
+
+on:
+  workflow_call:
+    inputs:
+      openapi-command:
+        description: 'Composer command to regenerate OpenAPI'
+        required: false
+        type: string
+        default: 'composer run openapi'
+      typescript-types-pattern:
+        description: 'Glob pattern to check for TypeScript OpenAPI types'
+        required: false
+        type: string
+        default: 'src/types/openapi/openapi*.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  openapi:
+    runs-on: ubuntu-latest
+
+    if: ${{ github.repository_owner != 'nextcloud-gmbh' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get php version
+        id: php_versions
+        uses: icewind1991/nextcloud-version-matrix@v1
+
+      - name: Set up php
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ steps.php_versions.outputs.php-available }}
+          extensions: xml
+          coverage: none
+          ini-file: development
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Typescript OpenApi types
+        id: check_typescript_openapi
+        uses: andstor/file-existence-action@v3
+        with:
+          files: ${{ inputs.typescript-types-pattern }}
+
+      - name: Install dependencies
+        env:
+          CYPRESS_INSTALL_BINARY: 0
+          PUPPETEER_SKIP_DOWNLOAD: true
+        run: |
+          npm i -g pnpm
+          pnpm i --frozen-lockfile
+
+      - name: Set up dependencies
+        run: composer i
+
+      - name: Regenerate OpenAPI
+        run: ${{ inputs.openapi-command }}
+
+      - name: Check openapi*.json and typescript changes
+        run: |
+          bash -c "[[ ! \"`git status --porcelain `\" ]] || (echo 'Please run \"composer run openapi\" and commit the openapi*.json files and (if applicable) src/types/openapi/openapi*.ts, see the section \"Show changes on failure\" for details' && exit 1)"
+
+      - name: Show changes on failure
+        if: failure()
+        run: |
+          git status
+          git --no-pager diff
+          exit 1

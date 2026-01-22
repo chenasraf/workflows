@@ -1,0 +1,85 @@
+# Reusable workflow for NPM build verification
+#
+# SPDX-FileCopyrightText: Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Build NPM
+
+on:
+  workflow_call:
+    inputs:
+      build-command:
+        description: 'Command to run build'
+        required: false
+        type: string
+        default: 'pnpm build'
+      path-filters:
+        description: 'Paths to filter on (YAML format)'
+        required: false
+        type: string
+        default: |
+          - '.github/workflows/**'
+          - 'src/**'
+          - '*.ts'
+          - '*.js'
+          - '*.json'
+          - '*.yaml'
+          - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    outputs:
+      src: ${{ steps.changes.outputs.src }}
+
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: changes
+        continue-on-error: true
+        with:
+          filters: |
+            src:
+              ${{ inputs.path-filters }}
+
+  build:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.src != 'false'
+
+    name: PNPM Build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        env:
+          CYPRESS_INSTALL_BINARY: 0
+          PUPPETEER_SKIP_DOWNLOAD: true
+        run: |
+          npm i -g pnpm
+          pnpm i --frozen-lockfile
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+  summary:
+    permissions:
+      contents: none
+    runs-on: ubuntu-latest
+    needs: [changes, build]
+
+    if: always()
+
+    name: build-npm-summary
+
+    steps:
+      - name: Summary status
+        run: if ${{ needs.changes.outputs.src != 'false' && needs.build.result != 'success' }}; then exit 1; fi
