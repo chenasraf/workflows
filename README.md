@@ -71,3 +71,7 @@ jobs:
     secrets:
       REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
 ```
+
+## License
+
+MIT
