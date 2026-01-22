@@ -48,7 +48,7 @@ jobs:
 | `test-command`      | Test command to run                                  | No       | `go test -v ./...`                                                 |
 | `skip-tests`        | Skip running tests                                   | No       | `false`                                                            |
 | `main-branch`       | Main branch name for releases                        | No       | `master`                                                           |
-| `homebrew-tap-repo` | Homebrew tap repo for dispatch (leave empty to skip) | No       | `chenasraf/homebrew-tap`                                           |
+| `homebrew-tap-repo` | Homebrew tap repo for dispatch (leave empty to skip) | No       | ``                                                                 |
 
 #### Secrets
 
