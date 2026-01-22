@@ -14,13 +14,19 @@ help:
 
 tag:
 ifndef TAG
-	$(error TAG is required. Usage: make tag TAG=<name> [VERSION=<number>])
-endif
+	@read -p "Enter tag name: " tag_input; \
+	if [ -z "$$tag_input" ]; then \
+		echo "Error: TAG is required"; \
+		exit 1; \
+	fi; \
+	$(MAKE) tag TAG=$$tag_input $(if $(VERSION),VERSION=$(VERSION),)
+else
 	@# Auto-detect version if not provided
-	$(eval VERSION ?= $(shell \
+	$(eval _detected_version := $(shell \
 		latest=$$(git tag --list '$(TAG)-v*' | sed 's/$(TAG)-v//' | sort -n | tail -1); \
 		if [ -z "$$latest" ]; then echo 1; else echo $$((latest + 1)); fi \
 	))
+	$(eval VERSION := $(or $(VERSION),$(_detected_version)))
 	@# Get latest global version
 	$(eval GLOBAL_VERSION := $(shell \
 		latest=$$(git tag --list 'v*' | grep -E '^v[0-9]+$$' | sed 's/v//' | sort -n | tail -1); \
@@ -40,4 +46,12 @@ endif
 	git tag $(TAG)-latest
 	@echo ""
 	@echo "Tags created successfully!"
-	@echo "To push tags, run: git push origin v$(GLOBAL_VERSION) $(TAG)-v$(VERSION) $(TAG)-latest --force"
+	@read -p "Push tags to remote? [Y/n] " answer; \
+	answer=$${answer:-y}; \
+	if echo "$$answer" | grep -iq "^y"; then \
+		echo "Pushing tags to remote..."; \
+		git push origin v$(GLOBAL_VERSION) $(TAG)-v$(VERSION) $(TAG)-latest --force; \
+	else \
+		echo "To push tags later, run: git push origin v$(GLOBAL_VERSION) $(TAG)-v$(VERSION) $(TAG)-latest --force"; \
+	fi
+endif
