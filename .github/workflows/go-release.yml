@@ -1,0 +1,216 @@
+# Reusable Go Release Workflow
+# Call from other repos:
+#   jobs:
+#     release:
+#       uses: chenasraf/workflows/.github/workflows/go-release.yml@main
+#       with:
+#         name: my-binary
+#       secrets:
+#         REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
+
+name: Go Release
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: 'Binary/project name'
+        required: true
+        type: string
+      go-version:
+        description: 'Go version to use'
+        required: false
+        type: string
+        default: '1.24'
+      platforms:
+        description: 'JSON array of platforms to build (e.g., ["linux/amd64", "darwin/arm64"])'
+        required: false
+        type: string
+        default: '["linux/amd64", "darwin/amd64", "darwin/arm64", "windows/amd64"]'
+      package:
+        description: 'Go package path (empty for root)'
+        required: false
+        type: string
+        default: ''
+      compress:
+        description: 'Compress build artifacts'
+        required: false
+        type: boolean
+        default: true
+      test-command:
+        description: 'Test command to run'
+        required: false
+        type: string
+        default: 'go test -v ./...'
+      skip-tests:
+        description: 'Skip running tests'
+        required: false
+        type: boolean
+        default: false
+      main-branch:
+        description: 'Main branch name for releases'
+        required: false
+        type: string
+        default: 'master'
+      homebrew-tap-repo:
+        description: 'Homebrew tap repo for dispatch (e.g., owner/homebrew-tap). Leave empty to skip.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      REPO_DISPATCH_PAT:
+        description: 'PAT for dispatching to homebrew tap repo'
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  test:
+    name: Test
+    if: ${{ !inputs.skip-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Test
+        run: ${{ inputs.test-command }}
+
+  prepare-matrix:
+    name: Prepare Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          platforms='${{ inputs.platforms }}'
+          matrix=$(echo "$platforms" | jq -c '{include: [.[] | {platform: ., label: (. | gsub("/"; "-"))}]}')
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+
+  generate:
+    name: Build for ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    needs: [prepare-matrix]
+    strategy:
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build for ${{ matrix.label }}
+        uses: chenasraf/go-cross-build@v1
+        with:
+          platforms: ${{ matrix.platform }}
+          package: ${{ inputs.package }}
+          name: ${{ inputs.name }}
+          compress: ${{ inputs.compress && 'true' || 'false' }}
+          dest: dist
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: "dist-${{ matrix.label }}"
+          path: dist
+
+  release-please:
+    name: Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    needs:
+      - test
+      - generate
+    # Allow release even if tests were skipped
+    if: |
+      always() &&
+      github.ref == format('refs/heads/{0}', inputs.main-branch) &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      needs.generate.result == 'success'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all builds
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Verify Release Artifacts
+        run: |
+          echo "Verifying artifacts for: ${{ inputs.name }}"
+          ls -la dist
+          platforms='${{ inputs.platforms }}'
+          for platform in $(echo "$platforms" | jq -r '.[]'); do
+            label=$(echo "$platform" | tr '/' '-')
+            artifact="./dist/dist-$label/${{ inputs.name }}-$label.tar.gz"
+            if [[ ! -f "$artifact" ]]; then
+              echo "File not found: $artifact"
+              exit 1
+            fi
+            echo "Found: $artifact"
+          done
+
+      - name: Run Release Please
+        uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: simple
+
+      - name: Upload Release Artifacts
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          platforms='${{ inputs.platforms }}'
+          for platform in $(echo "$platforms" | jq -r '.[]'); do
+            label=$(echo "$platform" | tr '/' '-')
+            gh release upload "${{ steps.release.outputs.tag_name }}" "./dist/dist-$label/${{ inputs.name }}-$label.tar.gz"
+          done
+
+  release-homebrew:
+    name: Homebrew Release
+    needs: [release-please]
+    if: ${{ needs.release-please.outputs.release_created && inputs.homebrew-tap-repo != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release body
+        id: release-body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body=$(gh release view "${{ needs.release-please.outputs.tag_name }}" --repo "${{ github.repository }}" --json body -q .body)
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$body" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Send dispatch to homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+        run: |
+          repo="${{ github.event.repository.name }}"
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          body=$(cat <<'BODY_EOF'
+          ${{ steps.release-body.outputs.body }}
+          BODY_EOF
+          )
+          data=$(jq -n \
+            --arg tag "$tag" \
+            --arg repo "$repo" \
+            --arg body "$body" \
+            '{event_type: "trigger-from-release", client_payload: {tag: $tag, repo: $repo, body: $body}}')
+          echo "Dispatching tag $tag from $repo"
+          echo "Data: $data"
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ inputs.homebrew-tap-repo }}/dispatches" \
+            -d "$data"
+          echo "Dispatched tag $tag from $repo"
+          echo "Created job on https://github.com/${{ inputs.homebrew-tap-repo }}/actions"
