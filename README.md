@@ -74,6 +74,47 @@ jobs:
 
 ---
 
+### Manual Homebrew Release (`manual-homebrew-release.yml`)
+
+Manually triggers a Homebrew tap update for the latest release. Useful when you need to re-trigger a Homebrew formula update without creating a new release.
+
+#### Features
+
+- Fetches the latest release tag and body from the repository
+- Sends a repository dispatch event to your Homebrew tap repo
+- Works with any Homebrew tap that listens for `trigger-from-release` events with payload: `{ tag, repo, body }`
+
+#### Usage
+
+```yaml
+name: Manual Homebrew Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  homebrew:
+    uses: chenasraf/workflows/.github/workflows/manual-homebrew-release.yml@master
+    with:
+      homebrew-tap-repo: myorg/homebrew-tap
+    secrets:
+      REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
+```
+
+#### Inputs
+
+| Input               | Description                                      | Required | Default |
+| ------------------- | ------------------------------------------------ | -------- | ------- |
+| `homebrew-tap-repo` | Homebrew tap repo to dispatch to (e.g., owner/homebrew-tap) | Yes      | -       |
+
+#### Secrets
+
+| Secret              | Description                              | Required |
+| ------------------- | ---------------------------------------- | -------- |
+| `REPO_DISPATCH_PAT` | PAT for dispatching to homebrew tap repo | Yes      |
+
+---
+
 ## Nextcloud Workflows
 
 Reusable workflows for Nextcloud app development. These workflows include automatic path filtering to skip unnecessary runs when irrelevant files change.

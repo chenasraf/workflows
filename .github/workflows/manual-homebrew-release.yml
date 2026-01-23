@@ -1,0 +1,75 @@
+# Reusable Manual Homebrew Release Workflow
+#
+# Call from other repos:
+#   jobs:
+#     homebrew:
+#       uses: chenasraf/workflows/.github/workflows/manual-homebrew-release.yml@master
+#       with:
+#         homebrew-tap-repo: owner/homebrew-tap
+#       secrets:
+#         REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
+
+name: Manual Homebrew Release
+
+on:
+  workflow_call:
+    inputs:
+      homebrew-tap-repo:
+        description: 'Homebrew tap repo to dispatch to (e.g., owner/homebrew-tap)'
+        required: true
+        type: string
+    secrets:
+      REPO_DISPATCH_PAT:
+        description: 'PAT for dispatching to homebrew tap repo'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-homebrew:
+    name: Trigger Homebrew Formula Update
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get latest release info
+        id: latest
+        run: |
+          tag=$(gh release view --json tagName -q .tagName)
+          echo "Latest release tag: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          body=$(gh release view --json body -q .body)
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$body" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send dispatch to homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+        run: |
+          tag="${{ steps.latest.outputs.tag }}"
+          repo="${{ github.event.repository.name }}"
+          body=$(cat <<'BODY_EOF'
+          ${{ steps.latest.outputs.body }}
+          BODY_EOF
+          )
+          data=$(jq -n \
+            --arg tag "$tag" \
+            --arg repo "$repo" \
+            --arg body "$body" \
+            '{event_type: "trigger-from-release", client_payload: {tag: $tag, repo: $repo, body: $body}}')
+          echo "Dispatching tag $tag from $repo"
+          echo "Data: $data"
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ inputs.homebrew-tap-repo }}/dispatches" \
+            -d "$data"
+          echo "Dispatched tag $tag from $repo"
+          echo "Created job on https://github.com/${{ inputs.homebrew-tap-repo }}/actions"
