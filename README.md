@@ -2,6 +2,26 @@
 
 A collection of reusable GitHub Actions workflows.
 
+## Table of Contents
+
+- [Workflows](#workflows)
+  - [Go Release](#go-release-go-releaseyml)
+  - [Manual Homebrew Release](#manual-homebrew-release-manual-homebrew-releaseyml)
+- [Nextcloud Workflows](#nextcloud-workflows)
+  - [PHPUnit MySQL](#phpunit-mysql-nextcloud-phpunit-mysqlyml)
+  - [PHPUnit PostgreSQL](#phpunit-postgresql-nextcloud-phpunit-pgsqlyml)
+  - [PHPUnit Incremental Migration](#phpunit-incremental-migration-nextcloud-phpunit-incrementalyml)
+  - [Psalm Static Analysis](#psalm-static-analysis-nextcloud-psalmyml)
+  - [PHP Lint](#php-lint-nextcloud-lint-phpyml)
+  - [PHP-CS-Fixer](#php-cs-fixer-nextcloud-lint-php-csyml)
+  - [ESLint](#eslint-nextcloud-lint-eslintyml)
+  - [OpenAPI Lint](#openapi-lint-nextcloud-lint-openapiyml)
+  - [AppInfo XML Lint](#appinfo-xml-lint-nextcloud-lint-appinfo-xmlyml)
+  - [NPM Build](#npm-build-nextcloud-build-npmyml)
+  - [Vitest](#vitest-nextcloud-vitestyml)
+  - [Block Unconventional Commits](#block-unconventional-commits-nextcloud-block-unconventional-commitsyml)
+- [License](#license)
+
 ## Workflows
 
 ### Go Release (`go-release.yml`)
