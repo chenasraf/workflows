@@ -27,18 +27,10 @@ else
 		if [ -z "$$latest" ]; then echo 1; else echo $$((latest + 1)); fi \
 	))
 	$(eval VERSION := $(or $(VERSION),$(_detected_version)))
-	@# Get latest global version
-	$(eval GLOBAL_VERSION := $(shell \
-		latest=$$(git tag --list 'v*' | grep -E '^v[0-9]+$$' | sed 's/v//' | sort -n | tail -1); \
-		if [ -z "$$latest" ]; then echo 1; else echo $$((latest + 1)); fi \
-	))
 	@echo "Tagging with:"
-	@echo "  Global version: v$(GLOBAL_VERSION)"
 	@echo "  Tag version:    $(TAG)-v$(VERSION)"
 	@echo "  Latest tag:     $(TAG)-latest"
 	@echo ""
-	@# Create global version tag
-	git tag -f v$(GLOBAL_VERSION)
 	@# Create tag-specific version
 	git tag -f $(TAG)-v$(VERSION)
 	@# Remove old latest tag and re-create
@@ -50,8 +42,8 @@ else
 	answer=$${answer:-y}; \
 	if echo "$$answer" | grep -iq "^y"; then \
 		echo "Pushing tags to remote..."; \
-		git push origin v$(GLOBAL_VERSION) $(TAG)-v$(VERSION) $(TAG)-latest --force; \
+		git push origin $(TAG)-v$(VERSION) $(TAG)-latest --force; \
 	else \
-		echo "To push tags later, run: git push origin v$(GLOBAL_VERSION) $(TAG)-v$(VERSION) $(TAG)-latest --force"; \
+		echo "To push tags later, run: git push origin $(TAG)-v$(VERSION) $(TAG)-latest --force"; \
 	fi
 endif
