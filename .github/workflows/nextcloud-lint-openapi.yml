@@ -46,7 +46,9 @@ jobs:
         run: |
           echo "yaml<<EOF" >> $GITHUB_OUTPUT
           echo "src:" >> $GITHUB_OUTPUT
-          echo '${{ inputs.path-filters }}' | sed 's/^/  /' >> $GITHUB_OUTPUT
+          cat <<'INPUT_EOF' | sed 's/^/  /' >> $GITHUB_OUTPUT
+          ${{ inputs.path-filters }}
+          INPUT_EOF
           echo "EOF" >> $GITHUB_OUTPUT
 
       - uses: dorny/paths-filter@v3
