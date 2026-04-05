@@ -184,7 +184,7 @@ jobs:
       - name: PHPUnit
         if: steps.check_phpunit.outcome == 'success'
         working-directory: apps/${{ env.APP_NAME }}
-        run: composer run test:unit
+        run: composer run test:unit -- --display-all-issues
 
       - name: Check PHPUnit integration script is defined
         id: check_integration
@@ -200,7 +200,7 @@ jobs:
       - name: PHPUnit integration
         if: steps.check_integration.outcome == 'success'
         working-directory: apps/${{ env.APP_NAME }}
-        run: composer run test:integration
+        run: composer run test:integration -- --display-all-issues
 
       - name: Print logs
         if: always()
