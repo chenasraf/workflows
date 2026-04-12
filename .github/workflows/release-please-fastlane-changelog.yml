@@ -1,0 +1,156 @@
+# Reusable Release Please + Fastlane Changelog Workflow
+#
+# Runs release-please, then if a PR was created/updated, generates a
+# fastlane changelog from CHANGELOG.md and amends it into the release
+# commit. The changelog is truncated to 500 chars (Play Store limit).
+#
+# Supports writing the changelog to multiple directories (e.g. Android
+# and iOS fastlane metadata). Pass a newline-separated list of paths.
+#
+# Call from other repos:
+#   jobs:
+#     release-please:
+#       uses: chenasraf/workflows/.github/workflows/release-please-fastlane-changelog.yml@master
+#       with:
+#         release-type: dart
+#
+# Outputs are forwarded from release-please so downstream jobs can
+# use release_created, tag_name, and version.
+
+name: Release Please + Fastlane Changelog
+
+on:
+  workflow_call:
+    inputs:
+      release-type:
+        description: 'Release Please release type (e.g., dart, node, python, go)'
+        required: true
+        type: string
+      version-file:
+        description: 'File containing the version string'
+        required: false
+        type: string
+        default: 'pubspec.yaml'
+      changelog-file:
+        description: 'Path to the CHANGELOG.md file'
+        required: false
+        type: string
+        default: 'CHANGELOG.md'
+      fastlane-changelog-dirs:
+        description: |
+          Newline-separated list of directories to write the changelog file to.
+          Each directory gets a `{versionCode}.txt` file with the same content.
+        required: false
+        type: string
+        default: 'fastlane/metadata/android/en-US/changelogs'
+      max-length:
+        description: 'Maximum changelog length (Play Store limit is 500)'
+        required: false
+        type: number
+        default: 500
+      truncation-trailer:
+        description: 'Text appended when changelog is truncated'
+        required: false
+        type: string
+        default: "\n\n… see full notes on GitHub."
+    secrets:
+      token:
+        description: 'GitHub token for release-please (defaults to GITHUB_TOKEN)'
+        required: false
+    outputs:
+      release_created:
+        description: 'Whether a release was created'
+        value: ${{ jobs.release-please.outputs.release_created }}
+      tag_name:
+        description: 'The release tag name'
+        value: ${{ jobs.release-please.outputs.tag_name }}
+      version:
+        description: 'The release version'
+        value: ${{ jobs.release-please.outputs.version }}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          release-type: ${{ inputs.release-type }}
+          token: ${{ secrets.token || github.token }}
+
+      - name: Update fastlane changelog on release PR
+        if: ${{ steps.release.outputs.pr && !steps.release.outputs.release_created }}
+        env:
+          PR_JSON: ${{ steps.release.outputs.pr }}
+          VERSION_FILE: ${{ inputs.version-file }}
+          CHANGELOG_FILE: ${{ inputs.changelog-file }}
+          OUT_DIRS: ${{ inputs.fastlane-changelog-dirs }}
+          MAX_LENGTH: ${{ inputs.max-length }}
+          TRAILER: ${{ inputs.truncation-trailer }}
+        run: |
+          PR_BRANCH=$(echo "$PR_JSON" | jq -r .headBranchName)
+          git clone --depth=5 --branch "$PR_BRANCH" \
+            https://x-access-token:${{ secrets.token || github.token }}@github.com/${{ github.repository }}.git _pr
+          cd _pr
+
+          # Extract version name and code
+          VERSION_LINE=$(grep '^version:' "$VERSION_FILE")
+          VERSION=$(echo "$VERSION_LINE" | sed 's/version: *//;s/+.*//')
+          CODE=$(echo "$VERSION_LINE" | sed 's/.*+//')
+
+          # Generate changelog content
+          if [ ! -f "$CHANGELOG_FILE" ]; then
+            NOTES="Release $VERSION"
+            echo "No $CHANGELOG_FILE found, using fallback."
+          else
+            NOTES=$(awk "
+              /^## \\[${VERSION//./\\.}\\]/ { found=1; next }
+              /^## / { if (found) exit }
+              found { print }
+            " "$CHANGELOG_FILE")
+
+            NOTES=$(echo "$NOTES" \
+              | sed -E 's/ *\(\[[0-9a-f]+\]\([^)]+\)\)//g' \
+              | sed -E 's/^\* \*\*[^*]+:\*\* */- /; s/^\* /- /' \
+              | sed 's/^### //' \
+              | sed '/^[[:space:]]*$/d')
+
+            NOTES=$(echo "$NOTES" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
+            [ -z "$NOTES" ] && NOTES="Release $VERSION"
+
+            if [ ${#NOTES} -gt "$MAX_LENGTH" ]; then
+              BUDGET=$((MAX_LENGTH - ${#TRAILER}))
+              NOTES="${NOTES:0:$BUDGET}"
+              NOTES=$(echo "$NOTES" | sed '$d')
+              NOTES="${NOTES}${TRAILER}"
+            fi
+          fi
+
+          echo "Changelog (${#NOTES} chars):"
+          echo "$NOTES"
+          echo "---"
+
+          # Write to each output directory
+          echo "$OUT_DIRS" | while IFS= read -r dir; do
+            dir=$(echo "$dir" | xargs)  # trim whitespace
+            [ -z "$dir" ] && continue
+            mkdir -p "$dir"
+            echo "$NOTES" > "$dir/$CODE.txt"
+            echo "Wrote $dir/$CODE.txt"
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changelog changes."
+          else
+            git commit --amend --no-edit
+            git push --force-with-lease
+          fi

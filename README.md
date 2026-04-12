@@ -7,6 +7,7 @@ A collection of reusable GitHub Actions workflows.
 - [Workflows](#workflows)
   - [Go Release](#go-release-go-releaseyml)
   - [Manual Homebrew Release](#manual-homebrew-release-manual-homebrew-releaseyml)
+  - [Release Please + Fastlane Changelog](#release-please--fastlane-changelog-release-please-fastlane-changelogyml)
 - [Nextcloud Workflows](#nextcloud-workflows)
   - [PHPUnit MySQL](#phpunit-mysql-nextcloud-phpunit-mysqlyml)
   - [PHPUnit PostgreSQL](#phpunit-postgresql-nextcloud-phpunit-pgsqlyml)
@@ -120,6 +121,85 @@ jobs:
 | Secret              | Description                              | Required |
 | ------------------- | ---------------------------------------- | -------- |
 | `REPO_DISPATCH_PAT` | PAT for dispatching to homebrew tap repo | Yes      |
+
+---
+
+### Release Please + Fastlane Changelog (`release-please-fastlane-changelog.yml`)
+
+Runs [release-please](https://github.com/googleapis/release-please), then when a release PR is
+created or updated, extracts the changelog for the current version from `CHANGELOG.md`, formats it
+for the Play Store (stripped of markdown links, commit hashes, etc.), truncates to the 500-char
+limit, and writes it to one or more fastlane metadata directories. The changelog is amended into
+release-please's commit so the tagged release includes the file.
+
+#### Features
+
+- Runs release-please with configurable release type
+- Extracts version-specific notes from `CHANGELOG.md`
+- Strips commit links, reformats bullets, removes markdown headers
+- Truncates to Play Store's 500-char limit with a configurable trailer
+- Writes to multiple output directories (e.g. Android + iOS fastlane metadata)
+- Amends the release-please commit (no extra commits in the PR)
+- Forwards `release_created`, `tag_name`, and `version` outputs
+
+#### Usage
+
+```yaml
+name: CI/CD
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  release-please:
+    uses: chenasraf/workflows/.github/workflows/release-please-fastlane-changelog.yml@master
+    with:
+      release-type: dart
+```
+
+With multiple output directories (Android + iOS):
+
+```yaml
+jobs:
+  release-please:
+    uses: chenasraf/workflows/.github/workflows/release-please-fastlane-changelog.yml@master
+    with:
+      release-type: dart
+      fastlane-changelog-dirs: |
+        fastlane/metadata/android/en-US/changelogs
+        fastlane/metadata/ios/en-US/changelogs
+
+  build:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    # ...
+```
+
+#### Inputs
+
+| Input                      | Description                                                        | Required | Default                                          |
+| -------------------------- | ------------------------------------------------------------------ | -------- | ------------------------------------------------ |
+| `release-type`             | Release Please release type (`dart`, `node`, `python`, `go`, etc.) | Yes      | -                                                |
+| `version-file`             | File containing the version string                                 | No       | `pubspec.yaml`                                   |
+| `changelog-file`           | Path to the CHANGELOG.md file                                      | No       | `CHANGELOG.md`                                   |
+| `fastlane-changelog-dirs`  | Newline-separated list of output directories                       | No       | `fastlane/metadata/android/en-US/changelogs`     |
+| `max-length`               | Maximum changelog length in characters                             | No       | `500`                                            |
+| `truncation-trailer`       | Text appended when the changelog is truncated                      | No       | `\n\n… see full notes on GitHub.`                |
+
+#### Secrets
+
+| Secret  | Description                                        | Required |
+| ------- | -------------------------------------------------- | -------- |
+| `token` | GitHub token for release-please (defaults to `GITHUB_TOKEN`) | No       |
+
+#### Outputs
+
+| Output            | Description                  |
+| ----------------- | ---------------------------- |
+| `release_created` | Whether a release was created |
+| `tag_name`        | The release tag name          |
+| `version`         | The release version           |
 
 ---
 
