@@ -4,15 +4,31 @@
 # fastlane changelog from CHANGELOG.md and amends it into the release
 # commit. The changelog is truncated to 500 chars (Play Store limit).
 #
-# Supports writing the changelog to multiple directories (e.g. Android
-# and iOS fastlane metadata). Pass a newline-separated list of paths.
+# Two complementary ways to configure output directories:
 #
-# Call from other repos:
-#   jobs:
-#     release-please:
-#       uses: chenasraf/workflows/.github/workflows/release-please-fastlane-changelog.yml@master
-#       with:
-#         release-type: dart
+# 1. `fastlane-changelog-dirs` — newline-separated paths. These are
+#    "catch-all" dirs: every commit (regardless of scope) is written
+#    to them, unfiltered.
+#
+# 2. `scopes` — YAML map of `scope: dir(s)`. Dirs listed here are
+#    scope-filtered: they only receive commits whose scope either:
+#      - is not present anywhere in the map (treated as "applies
+#        to all"), or
+#      - is present and lists that dir among its targets.
+#
+#    Example:
+#      scopes: |
+#        ios: fastlane/metadata/ios/en-US/changelogs
+#        apple: |
+#          fastlane/metadata/ios/en-US/changelogs
+#          fastlane/metadata/macos/en-US/changelogs
+#        android: fastlane/metadata/android/en-US/changelogs
+#
+#    With this, `feat(ios): …` lands only in the iOS dir,
+#    `feat(apple): …` lands in iOS and macOS, `feat(android): …`
+#    lands only in the Android dir, and unscoped commits land in all.
+#
+# A dir present in both inputs is treated as a catch-all.
 #
 # Outputs are forwarded from release-please so downstream jobs can
 # use release_created, tag_name, and version.
@@ -38,11 +54,19 @@ on:
         default: 'CHANGELOG.md'
       fastlane-changelog-dirs:
         description: |
-          Newline-separated list of directories to write the changelog file to.
-          Each directory gets a `{versionCode}.txt` file with the same content.
+          Newline-separated list of catch-all directories. Every commit
+          is written here unfiltered, regardless of scope.
         required: false
         type: string
-        default: 'fastlane/metadata/android/en-US/changelogs'
+        default: ''
+      scopes:
+        description: |
+          YAML mapping of commit scope to one-or-more output directories.
+          Dirs listed here are scope-filtered: they only receive commits
+          whose scope is unmapped or lists that dir among its targets.
+        required: false
+        type: string
+        default: ''
       max-length:
         description: 'Maximum changelog length (Play Store limit is 500)'
         required: false
@@ -91,9 +115,11 @@ jobs:
           VERSION_FILE: ${{ inputs.version-file }}
           CHANGELOG_FILE: ${{ inputs.changelog-file }}
           OUT_DIRS: ${{ inputs.fastlane-changelog-dirs }}
+          SCOPES_INPUT: ${{ inputs.scopes }}
           MAX_LENGTH: ${{ inputs.max-length }}
           TRAILER: ${{ inputs.truncation-trailer }}
         run: |
+          set -euo pipefail
           PR_BRANCH=$(echo "$PR_JSON" | jq -r .headBranchName)
           git clone --depth=5 --branch "$PR_BRANCH" \
             https://x-access-token:${{ secrets.token || github.token }}@github.com/${{ github.repository }}.git _pr
@@ -104,46 +130,114 @@ jobs:
           VERSION=$(echo "$VERSION_LINE" | sed 's/version: *//;s/+.*//')
           CODE=$(echo "$VERSION_LINE" | sed 's/.*+//')
 
-          # Generate changelog content
+          # Extract raw release notes from CHANGELOG.md (unfiltered, pre-cosmetics)
           if [ ! -f "$CHANGELOG_FILE" ]; then
-            NOTES="Release $VERSION"
-            echo "No $CHANGELOG_FILE found, using fallback."
+            RAW_NOTES=""
+            echo "No $CHANGELOG_FILE found, will use fallback."
           else
-            NOTES=$(awk "
+            RAW_NOTES=$(awk "
               /^## \\[${VERSION//./\\.}\\]/ { found=1; next }
               /^## / { if (found) exit }
               found { print }
             " "$CHANGELOG_FILE")
+          fi
 
-            NOTES=$(echo "$NOTES" \
+          # Parse scopes map (if provided) → SCOPE_NAMES + SCOPE_DIRS
+          SCOPE_NAMES=()
+          declare -A SCOPE_DIRS=()
+          SCOPED_DIRS=""
+          if [ -n "${SCOPES_INPUT//[[:space:]]/}" ]; then
+            mapfile -t SCOPE_NAMES < <(printf '%s' "$SCOPES_INPUT" | yq 'keys | .[]')
+            for s in "${SCOPE_NAMES[@]}"; do
+              raw=$(printf '%s' "$SCOPES_INPUT" | yq ".\"$s\"")
+              [ "$raw" = "null" ] && raw=""
+              clean=$(printf '%s\n' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF')
+              SCOPE_DIRS["$s"]="$clean"
+              SCOPED_DIRS=$(printf '%s\n%s' "$SCOPED_DIRS" "$clean")
+            done
+          fi
+          SCOPED_DIRS=$(printf '%s\n' "$SCOPED_DIRS" | awk 'NF' | sort -u)
+
+          # Catch-all dirs from fastlane-changelog-dirs receive all commits unfiltered.
+          # A dir present in both inputs is treated as a catch-all.
+          CATCHALL_DIRS=$(printf '%s\n' "$OUT_DIRS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF' | sort -u)
+          ALL_DIRS=$(printf '%s\n%s\n' "$SCOPED_DIRS" "$CATCHALL_DIRS" | awk 'NF' | sort -u)
+
+          echo "Catch-all dirs:"
+          [ -n "$CATCHALL_DIRS" ] && printf '  %s\n' $CATCHALL_DIRS || echo "  (none)"
+          echo "Scope-filtered dirs:"
+          if [ ${#SCOPE_NAMES[@]} -gt 0 ]; then
+            for s in "${SCOPE_NAMES[@]}"; do
+              echo "  scope '$s':"
+              printf '    %s\n' ${SCOPE_DIRS[$s]}
+            done
+          else
+            echo "  (none)"
+          fi
+
+          format_notes() {
+            local input="$1"
+            local out
+            out=$(printf '%s\n' "$input" \
               | sed -E 's/ *\(\[[0-9a-f]+\]\([^)]+\)\)//g' \
               | sed -E 's/^\* \*\*[^*]+:\*\* */- /; s/^\* /- /' \
               | sed 's/^### //' \
               | sed '/^[[:space:]]*$/d')
+            # strip leading + trailing blank lines
+            out=$(printf '%s' "$out" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
+            printf '%s' "$out"
+          }
 
-            NOTES=$(echo "$NOTES" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
-            [ -z "$NOTES" ] && NOTES="Release $VERSION"
-
-            if [ ${#NOTES} -gt "$MAX_LENGTH" ]; then
-              BUDGET=$((MAX_LENGTH - ${#TRAILER}))
-              NOTES="${NOTES:0:$BUDGET}"
-              NOTES=$(echo "$NOTES" | sed '$d')
-              NOTES="${NOTES}${TRAILER}"
+          truncate_notes() {
+            local notes="$1"
+            if [ ${#notes} -gt "$MAX_LENGTH" ]; then
+              local budget=$((MAX_LENGTH - ${#TRAILER}))
+              notes="${notes:0:$budget}"
+              notes=$(printf '%s' "$notes" | sed '$d')
+              notes="${notes}${TRAILER}"
             fi
-          fi
+            printf '%s' "$notes"
+          }
 
-          echo "Changelog (${#NOTES} chars):"
-          echo "$NOTES"
-          echo "---"
-
-          # Write to each output directory
-          echo "$OUT_DIRS" | while IFS= read -r dir; do
-            dir=$(echo "$dir" | xargs)  # trim whitespace
+          # Write per-directory
+          while IFS= read -r dir; do
             [ -z "$dir" ] && continue
+
+            is_catchall=0
+            if printf '%s\n' "$CATCHALL_DIRS" | grep -Fxq "$dir"; then
+              is_catchall=1
+            fi
+
+            exclude_alt=""
+            if [ "$is_catchall" -eq 0 ] && [ ${#SCOPE_NAMES[@]} -gt 0 ]; then
+              for s in "${SCOPE_NAMES[@]}"; do
+                if ! printf '%s\n' "${SCOPE_DIRS[$s]}" | grep -Fxq "$dir"; then
+                  if [ -z "$exclude_alt" ]; then
+                    exclude_alt="$s"
+                  else
+                    exclude_alt="$exclude_alt|$s"
+                  fi
+                fi
+              done
+            fi
+
+            filtered="$RAW_NOTES"
+            if [ -n "$exclude_alt" ]; then
+              filtered=$(printf '%s\n' "$RAW_NOTES" | grep -vE "^\* \*\*($exclude_alt)[^*]*:\*\*" || true)
+            fi
+
+            notes=$(format_notes "$filtered")
+            [ -z "$notes" ] && notes="Release $VERSION"
+            notes=$(truncate_notes "$notes")
+
             mkdir -p "$dir"
-            echo "$NOTES" > "$dir/$CODE.txt"
-            echo "Wrote $dir/$CODE.txt"
-          done
+            printf '%s\n' "$notes" > "$dir/$CODE.txt"
+            if [ "$is_catchall" -eq 1 ]; then
+              echo "Wrote $dir/$CODE.txt (${#notes} chars, catch-all)"
+            else
+              echo "Wrote $dir/$CODE.txt (${#notes} chars, excluded scopes: ${exclude_alt:-none})"
+            fi
+          done <<< "$ALL_DIRS"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
