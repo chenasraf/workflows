@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: 'composer run lint'
+      php-versions-min:
+        description: 'Minimum PHP version to include in the lint matrix (filters out anything lower than this from the auto-detected matrix)'
+        required: false
+        type: string
+        default: '8.1'
       php-extensions:
         description: 'PHP extensions to install'
         required: false
@@ -61,13 +66,19 @@ jobs:
     needs: changes
     if: needs.changes.outputs.src == 'true'
     outputs:
-      php-versions: ${{ steps.versions.outputs.php-versions }}
+      php-versions: ${{ steps.filter.outputs.php-versions }}
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
       - name: Get version matrix
         id: versions
         uses: icewind1991/nextcloud-version-matrix@v1
+      - name: Filter php versions by minimum
+        id: filter
+        run: |
+          FILTERED=$(echo '${{ steps.versions.outputs.php-versions }}' | jq -c --arg min "${{ inputs.php-versions-min }}" '[.[] | select(. >= $min)]')
+          echo "php-versions=$FILTERED" >> $GITHUB_OUTPUT
+          echo "Filtered php matrix (>= ${{ inputs.php-versions-min }}): $FILTERED"
 
   php-lint:
     runs-on: ubuntu-latest

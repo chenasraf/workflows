@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: 'composer run psalm'
+      php-versions-min:
+        description: 'Minimum PHP version to include in the analysis matrix (filters out any auto-detected ocp-matrix entries below this)'
+        required: false
+        type: string
+        default: '8.1'
       php-extensions:
         description: 'PHP extensions to install'
         required: false
@@ -62,13 +67,19 @@ jobs:
     needs: changes
     if: needs.changes.outputs.src == 'true'
     outputs:
-      ocp-matrix: ${{ steps.versions.outputs.ocp-matrix }}
+      ocp-matrix: ${{ steps.filter.outputs.ocp-matrix }}
     steps:
       - name: Checkout app
         uses: actions/checkout@v4
       - name: Get version matrix
         id: versions
         uses: icewind1991/nextcloud-version-matrix@v1
+      - name: Filter ocp-matrix by minimum php version
+        id: filter
+        run: |
+          FILTERED=$(echo '${{ steps.versions.outputs.ocp-matrix }}' | jq -c --arg min "${{ inputs.php-versions-min }}" '.include |= [.[] | select(.["php-versions"] >= $min)]')
+          echo "ocp-matrix=$FILTERED" >> $GITHUB_OUTPUT
+          echo "Filtered ocp-matrix (php >= ${{ inputs.php-versions-min }}): $FILTERED"
 
   static-analysis:
     runs-on: ubuntu-latest
