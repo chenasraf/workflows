@@ -180,6 +180,7 @@ jobs:
             local out
             out=$(printf '%s\n' "$input" \
               | sed -E 's/ *\(\[[0-9a-f]+\]\([^)]+\)\)//g' \
+              | sed -E 's/[,;]?[[:space:]]+(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(\[#[0-9]+\]\([^)]+\)|#[0-9]+)//gi' \
               | sed -E 's/^\* \*\*[^*]+:\*\* */- /; s/^\* /- /' \
               | sed 's/^### //' \
               | sed '/^[[:space:]]*$/d')
