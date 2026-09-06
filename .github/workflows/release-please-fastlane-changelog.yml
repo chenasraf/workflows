@@ -30,6 +30,13 @@
 #
 # A dir present in both inputs is treated as a catch-all.
 #
+# The file written to each dir is named after the version code, which
+# stores resolve against the artifact being uploaded. Where one repo
+# ships several artifacts whose version codes are offset from the
+# pubspec's (an Android form-factor variant, say), `version-code-offsets`
+# names the offset per directory so the file lands under the name that
+# artifact will be looked up by.
+#
 # Outputs are forwarded from release-please so downstream jobs can
 # use release_created, tag_name, and version.
 
@@ -64,6 +71,14 @@ on:
           YAML mapping of commit scope to one-or-more output directories.
           Dirs listed here are scope-filtered: they only receive commits
           whose scope is unmapped or lists that dir among its targets.
+        required: false
+        type: string
+        default: ''
+      version-code-offsets:
+        description: |
+          YAML mapping of output directory to an integer added to the
+          version code when naming that directory's changelog file.
+          Directories not listed use the version code as-is.
         required: false
         type: string
         default: ''
@@ -116,6 +131,7 @@ jobs:
           CHANGELOG_FILE: ${{ inputs.changelog-file }}
           OUT_DIRS: ${{ inputs.fastlane-changelog-dirs }}
           SCOPES_INPUT: ${{ inputs.scopes }}
+          OFFSETS_INPUT: ${{ inputs.version-code-offsets }}
           MAX_LENGTH: ${{ inputs.max-length }}
           TRAILER: ${{ inputs.truncation-trailer }}
         run: |
@@ -157,6 +173,17 @@ jobs:
             done
           fi
           SCOPED_DIRS=$(printf '%s\n' "$SCOPED_DIRS" | awk 'NF' | sort -u)
+
+          # Parse the per-directory version-code offsets (if provided).
+          declare -A DIR_OFFSETS=()
+          if [ -n "${OFFSETS_INPUT//[[:space:]]/}" ]; then
+            while IFS= read -r d; do
+              [ -z "$d" ] && continue
+              off=$(printf '%s' "$OFFSETS_INPUT" | yq ".\"$d\"")
+              [ "$off" = "null" ] && off=0
+              DIR_OFFSETS["$d"]="$off"
+            done < <(printf '%s' "$OFFSETS_INPUT" | yq 'keys | .[]')
+          fi
 
           # Catch-all dirs from fastlane-changelog-dirs receive all commits unfiltered.
           # A dir present in both inputs is treated as a catch-all.
@@ -231,12 +258,14 @@ jobs:
             [ -z "$notes" ] && notes="Release $VERSION"
             notes=$(truncate_notes "$notes")
 
+            file_code=$((CODE + ${DIR_OFFSETS[$dir]:-0}))
+
             mkdir -p "$dir"
-            printf '%s\n' "$notes" > "$dir/$CODE.txt"
+            printf '%s\n' "$notes" > "$dir/$file_code.txt"
             if [ "$is_catchall" -eq 1 ]; then
-              echo "Wrote $dir/$CODE.txt (${#notes} chars, catch-all)"
+              echo "Wrote $dir/$file_code.txt (${#notes} chars, catch-all)"
             else
-              echo "Wrote $dir/$CODE.txt (${#notes} chars, excluded scopes: ${exclude_alt:-none})"
+              echo "Wrote $dir/$file_code.txt (${#notes} chars, excluded scopes: ${exclude_alt:-none})"
             fi
           done <<< "$ALL_DIRS"
 
