@@ -32,6 +32,16 @@ on:
         required: false
         type: string
         default: ''
+      working-directory:
+        description: 'Directory containing the Go module (relative to the repo root)'
+        required: false
+        type: string
+        default: '.'
+      release-type:
+        description: 'Release Please release type (e.g., simple, node, go)'
+        required: false
+        type: string
+        default: 'simple'
       compress:
         description: 'Compress build artifacts'
         required: false
@@ -77,7 +87,9 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ${{ inputs.go-version }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
       - name: Test
+        working-directory: ${{ inputs.working-directory }}
         run: ${{ inputs.test-command }}
 
   prepare-matrix:
@@ -104,10 +116,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build for ${{ matrix.label }}
-        uses: chenasraf/go-cross-build@v1
+        uses: chenasraf/go-cross-build@v1.1
         with:
           platforms: ${{ matrix.platform }}
           package: ${{ inputs.package }}
+          working-directory: ${{ inputs.working-directory }}
           name: ${{ inputs.name }}
           compress: ${{ inputs.compress && 'true' || 'false' }}
           dest: dist
@@ -161,7 +174,7 @@ jobs:
         uses: googleapis/release-please-action@v4
         id: release
         with:
-          release-type: simple
+          release-type: ${{ inputs.release-type }}
 
       - name: Upload Release Artifacts
         if: ${{ steps.release.outputs.release_created }}

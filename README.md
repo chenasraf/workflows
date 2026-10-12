@@ -69,6 +69,8 @@ jobs:
 | `go-version`        | Go version to use                                    | No       | `1.24`                                                             |
 | `platforms`         | JSON array of platforms to build                     | No       | `["linux/amd64", "darwin/amd64", "darwin/arm64", "windows/amd64"]` |
 | `package`           | Go package path (empty for root)                     | No       | `""`                                                               |
+| `working-directory` | Directory containing the Go module                   | No       | `.`                                                                |
+| `release-type`      | Release Please release type (`simple`, `node`, etc.) | No       | `simple`                                                           |
 | `compress`          | Compress build artifacts                             | No       | `true`                                                             |
 | `test-command`      | Test command to run                                  | No       | `go test -v ./...`                                                 |
 | `skip-tests`        | Skip running tests                                   | No       | `false`                                                            |
