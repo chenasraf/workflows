@@ -5,8 +5,8 @@
 #       uses: chenasraf/workflows/.github/workflows/go-release.yml@main
 #       with:
 #         name: my-binary
-#       secrets:
-#         REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
+#
+# For Homebrew, add a job calling homebrew-release.yml with this workflow's outputs (see README).
 
 name: Go Release
 
@@ -62,15 +62,13 @@ on:
         required: false
         type: string
         default: 'master'
-      homebrew-tap-repo:
-        description: 'Homebrew tap repo for dispatch (e.g., owner/homebrew-tap). Leave empty to skip.'
-        required: false
-        type: string
-        default: ''
-    secrets:
-      REPO_DISPATCH_PAT:
-        description: 'PAT for dispatching to homebrew tap repo'
-        required: false
+    outputs:
+      release_created:
+        description: 'Whether a release was created'
+        value: ${{ jobs.release-please.outputs.release_created }}
+      tag_name:
+        description: 'The release tag name'
+        value: ${{ jobs.release-please.outputs.tag_name }}
 
 permissions:
   contents: write
@@ -186,44 +184,3 @@ jobs:
             label=$(echo "$platform" | tr '/' '-')
             gh release upload "${{ steps.release.outputs.tag_name }}" "./dist/dist-$label/${{ inputs.name }}-$label.tar.gz"
           done
-
-  release-homebrew:
-    name: Homebrew Release
-    needs: [release-please]
-    if: ${{ needs.release-please.outputs.release_created && inputs.homebrew-tap-repo != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get release body
-        id: release-body
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          body=$(gh release view "${{ needs.release-please.outputs.tag_name }}" --repo "${{ github.repository }}" --json body -q .body)
-          echo "body<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$body" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Send dispatch to homebrew-tap
-        env:
-          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
-        run: |
-          repo="${{ github.event.repository.name }}"
-          tag="${{ needs.release-please.outputs.tag_name }}"
-          body=$(cat <<'BODY_EOF'
-          ${{ steps.release-body.outputs.body }}
-          BODY_EOF
-          )
-          data=$(jq -n \
-            --arg tag "$tag" \
-            --arg repo "$repo" \
-            --arg body "$body" \
-            '{event_type: "trigger-from-release", client_payload: {tag: $tag, repo: $repo, body: $body}}')
-          echo "Dispatching tag $tag from $repo"
-          echo "Data: $data"
-          curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ inputs.homebrew-tap-repo }}/dispatches" \
-            -d "$data"
-          echo "Dispatched tag $tag from $repo"
-          echo "Created job on https://github.com/${{ inputs.homebrew-tap-repo }}/actions"

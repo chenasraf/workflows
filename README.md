@@ -6,6 +6,7 @@ A collection of reusable GitHub Actions workflows.
 
 - [Workflows](#workflows)
   - [Go Release](#go-release-go-releaseyml)
+  - [Homebrew Release](#homebrew-release-homebrew-releaseyml)
   - [Manual Homebrew Release](#manual-homebrew-release-manual-homebrew-releaseyml)
   - [Release Please + Fastlane Changelog](#release-please--fastlane-changelog-release-please-fastlane-changelogyml)
 - [Nextcloud Workflows](#nextcloud-workflows)
@@ -27,15 +28,16 @@ A collection of reusable GitHub Actions workflows.
 
 ### Go Release (`go-release.yml`)
 
-A complete CI/CD workflow for Go projects that handles testing, cross-platform builds, releases, and
-Homebrew tap updates.
+A complete CI/CD workflow for Go projects that handles testing, cross-platform builds and releases.
+For Homebrew tap updates, pair it with [Homebrew Release](#homebrew-release-homebrew-releaseyml)
+using this workflow's outputs.
 
 #### Features
 
 - Runs tests with configurable test command
 - Cross-platform builds (Linux, macOS, Windows)
 - Automated releases via [release-please](https://github.com/googleapis/release-please)
-- Automatic Homebrew tap updates via repository dispatch
+- Exposes `release_created` and `tag_name` for follow-up jobs
 
 #### Usage
 
@@ -56,7 +58,14 @@ jobs:
       go-version: '1.24'
       platforms: '["linux/amd64", "darwin/arm64"]'
       main-branch: main
+
+  homebrew:
+    needs: release
+    if: ${{ needs.release.outputs.release_created }}
+    uses: chenasraf/workflows/.github/workflows/homebrew-release.yml@master
+    with:
       homebrew-tap-repo: myorg/homebrew-tap
+      tag: ${{ needs.release.outputs.tag_name }}
     secrets:
       REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
 ```
@@ -75,13 +84,49 @@ jobs:
 | `test-command`      | Test command to run                                  | No       | `go test -v ./...`                                                 |
 | `skip-tests`        | Skip running tests                                   | No       | `false`                                                            |
 | `main-branch`       | Main branch name for releases                        | No       | `master`                                                           |
-| `homebrew-tap-repo` | Homebrew tap repo for dispatch (leave empty to skip) | No       | ``                                                                 |
+
+#### Outputs
+
+| Output            | Description                   |
+| ----------------- | ----------------------------- |
+| `release_created` | Whether a release was created |
+| `tag_name`        | The release tag name          |
+
+---
+
+### Homebrew Release (`homebrew-release.yml`)
+
+Sends a repository dispatch to a Homebrew tap with a release's tag and notes, for a tap that listens
+for `trigger-from-release` events with payload `{ tag, repo, body }`. It has no build steps, so it
+follows a release job (see [Go Release](#go-release-go-releaseyml)) or suits shell-only packages.
+
+#### Usage
+
+```yaml
+jobs:
+  homebrew:
+    needs: release
+    if: ${{ needs.release.outputs.release_created }}
+    uses: chenasraf/workflows/.github/workflows/homebrew-release.yml@master
+    with:
+      homebrew-tap-repo: myorg/homebrew-tap
+      tag: ${{ needs.release.outputs.tag_name }}
+    secrets:
+      REPO_DISPATCH_PAT: ${{ secrets.REPO_DISPATCH_PAT }}
+```
+
+#### Inputs
+
+| Input               | Description                                                 | Required | Default         |
+| ------------------- | ----------------------------------------------------------- | -------- | --------------- |
+| `homebrew-tap-repo` | Homebrew tap repo to dispatch to (e.g., owner/homebrew-tap) | Yes      | -               |
+| `tag`               | Release tag to dispatch                                     | No       | Latest release  |
 
 #### Secrets
 
 | Secret              | Description                              | Required |
 | ------------------- | ---------------------------------------- | -------- |
-| `REPO_DISPATCH_PAT` | PAT for dispatching to homebrew tap repo | No       |
+| `REPO_DISPATCH_PAT` | PAT for dispatching to homebrew tap repo | Yes      |
 
 ---
 
