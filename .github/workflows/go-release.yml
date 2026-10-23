@@ -18,10 +18,10 @@ on:
         required: true
         type: string
       go-version:
-        description: 'Go version to use'
+        description: 'Go version for the test job (empty: the go directive in <working-directory>/go.mod)'
         required: false
         type: string
-        default: '1.24'
+        default: ''
       platforms:
         description: 'JSON array of platforms to build (e.g., ["linux/amd64", "darwin/arm64"])'
         required: false
@@ -82,9 +82,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
+          go-version-file: ${{ inputs.go-version == '' && format('{0}/go.mod', inputs.working-directory) || '' }}
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
       - name: Test
         working-directory: ${{ inputs.working-directory }}

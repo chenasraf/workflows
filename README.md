@@ -55,7 +55,6 @@ jobs:
     uses: chenasraf/workflows/.github/workflows/go-release.yml@master
     with:
       name: my-cli
-      go-version: '1.24'
       platforms: '["linux/amd64", "darwin/arm64"]'
       main-branch: main
 
@@ -75,7 +74,7 @@ jobs:
 | Input               | Description                                          | Required | Default                                                            |
 | ------------------- | ---------------------------------------------------- | -------- | ------------------------------------------------------------------ |
 | `name`              | Binary/project name                                  | Yes      | -                                                                  |
-| `go-version`        | Go version to use                                    | No       | `1.24`                                                             |
+| `go-version`        | Go version for the test job                          | No       | the `go` directive in `<working-directory>/go.mod`                 |
 | `platforms`         | JSON array of platforms to build                     | No       | `["linux/amd64", "darwin/amd64", "darwin/arm64", "windows/amd64"]` |
 | `package`           | Go package path (empty for root)                     | No       | `""`                                                               |
 | `working-directory` | Directory containing the Go module                   | No       | `.`                                                                |
