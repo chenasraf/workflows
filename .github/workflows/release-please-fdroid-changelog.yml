@@ -1,46 +1,20 @@
-# Reusable Release Please + Fastlane Changelog Workflow
+# Reusable Release Please + F-Droid Changelog Workflow
 #
-# Runs release-please, then if a PR was created/updated, generates a
-# fastlane changelog from CHANGELOG.md and amends it into the release
-# commit. The changelog is truncated to 500 chars (Play Store limit).
+# Runs release-please, then, when the release PR was created or updated,
+# copies the curated release notes for the PR's version into the changelog
+# path F-Droid reads (`<changelog-dir>/<versionCode>.txt`) and amends it into
+# the release commit. F-Droid builds from the tagged source, so the file has
+# to be in the tree at the tag; the other stores get their notes uploaded
+# from `release-notes/<version>/` at deploy time.
 #
-# Two complementary ways to configure output directories:
-#
-# 1. `fastlane-changelog-dirs` — newline-separated paths. These are
-#    "catch-all" dirs: every commit (regardless of scope) is written
-#    to them, unfiltered.
-#
-# 2. `scopes` — YAML map of `scope: dir(s)`. Dirs listed here are
-#    scope-filtered: they only receive commits whose scope either:
-#      - is not present anywhere in the map (treated as "applies
-#        to all"), or
-#      - is present and lists that dir among its targets.
-#
-#    Example:
-#      scopes: |
-#        ios: fastlane/metadata/ios/en-US/changelogs
-#        apple: |
-#          fastlane/metadata/ios/en-US/changelogs
-#          fastlane/metadata/macos/en-US/changelogs
-#        android: fastlane/metadata/android/en-US/changelogs
-#
-#    With this, `feat(ios): …` lands only in the iOS dir,
-#    `feat(apple): …` lands in iOS and macOS, `feat(android): …`
-#    lands only in the Android dir, and unscoped commits land in all.
-#
-# A dir present in both inputs is treated as a catch-all.
-#
-# The file written to each dir is named after the version code, which
-# stores resolve against the artifact being uploaded. Where one repo
-# ships several artifacts whose version codes are offset from the
-# pubspec's (an Android form-factor variant, say), `version-code-offsets`
-# names the offset per directory so the file lands under the name that
-# artifact will be looked up by.
+# When the notes for the version don't exist yet, nothing is copied: the
+# release-notes check fails on the PR until they land on the default branch,
+# and release-please re-runs (and this step with it) on that push.
 #
 # Outputs are forwarded from release-please so downstream jobs can
 # use release_created, tag_name, and version.
 
-name: Release Please + Fastlane Changelog
+name: Release Please + F-Droid Changelog
 
 on:
   workflow_call:
@@ -50,48 +24,20 @@ on:
         required: true
         type: string
       version-file:
-        description: 'File containing the version string'
+        description: 'pubspec-style file holding `version: <name>+<code>`'
         required: false
         type: string
         default: 'pubspec.yaml'
-      changelog-file:
-        description: 'Path to the CHANGELOG.md file'
+      notes-file:
+        description: 'Curated notes to copy; `{version}` is replaced with the version name'
         required: false
         type: string
-        default: 'CHANGELOG.md'
-      fastlane-changelog-dirs:
-        description: |
-          Newline-separated list of catch-all directories. Every commit
-          is written here unfiltered, regardless of scope.
+        default: 'release-notes/{version}/play.txt'
+      changelog-dir:
+        description: 'Directory F-Droid reads changelogs from'
         required: false
         type: string
-        default: ''
-      scopes:
-        description: |
-          YAML mapping of commit scope to one-or-more output directories.
-          Dirs listed here are scope-filtered: they only receive commits
-          whose scope is unmapped or lists that dir among its targets.
-        required: false
-        type: string
-        default: ''
-      version-code-offsets:
-        description: |
-          YAML mapping of output directory to an integer added to the
-          version code when naming that directory's changelog file.
-          Directories not listed use the version code as-is.
-        required: false
-        type: string
-        default: ''
-      max-length:
-        description: 'Maximum changelog length (Play Store limit is 500)'
-        required: false
-        type: number
-        default: 500
-      truncation-trailer:
-        description: 'Text appended when changelog is truncated'
-        required: false
-        type: string
-        default: "\n\n… see full notes on GitHub."
+        default: 'fastlane/metadata/android/en-US/changelogs'
     secrets:
       token:
         description: 'GitHub token for release-please (defaults to GITHUB_TOKEN)'
@@ -123,17 +69,13 @@ jobs:
           release-type: ${{ inputs.release-type }}
           token: ${{ secrets.token || github.token }}
 
-      - name: Update fastlane changelog on release PR
+      - name: Copy release notes into the F-Droid changelog
         if: ${{ steps.release.outputs.pr && !steps.release.outputs.release_created }}
         env:
           PR_JSON: ${{ steps.release.outputs.pr }}
           VERSION_FILE: ${{ inputs.version-file }}
-          CHANGELOG_FILE: ${{ inputs.changelog-file }}
-          OUT_DIRS: ${{ inputs.fastlane-changelog-dirs }}
-          SCOPES_INPUT: ${{ inputs.scopes }}
-          OFFSETS_INPUT: ${{ inputs.version-code-offsets }}
-          MAX_LENGTH: ${{ inputs.max-length }}
-          TRAILER: ${{ inputs.truncation-trailer }}
+          NOTES_FILE: ${{ inputs.notes-file }}
+          CHANGELOG_DIR: ${{ inputs.changelog-dir }}
         run: |
           set -euo pipefail
           PR_BRANCH=$(echo "$PR_JSON" | jq -r .headBranchName)
@@ -141,137 +83,23 @@ jobs:
             https://x-access-token:${{ secrets.token || github.token }}@github.com/${{ github.repository }}.git _pr
           cd _pr
 
-          # Extract version name and code
           VERSION_LINE=$(grep '^version:' "$VERSION_FILE")
           VERSION=$(echo "$VERSION_LINE" | sed 's/version: *//;s/+.*//')
           CODE=$(echo "$VERSION_LINE" | sed 's/.*+//')
 
-          # Extract raw release notes from CHANGELOG.md (unfiltered, pre-cosmetics)
-          if [ ! -f "$CHANGELOG_FILE" ]; then
-            RAW_NOTES=""
-            echo "No $CHANGELOG_FILE found, will use fallback."
-          else
-            RAW_NOTES=$(awk "
-              /^## \\[${VERSION//./\\.}\\]/ { found=1; next }
-              /^## / { if (found) exit }
-              found { print }
-            " "$CHANGELOG_FILE")
+          SOURCE="${NOTES_FILE//\{version\}/$VERSION}"
+          if [ ! -f "$SOURCE" ]; then
+            echo "No $SOURCE yet — leaving the F-Droid changelog alone."
+            exit 0
           fi
 
-          # Parse scopes map (if provided) → SCOPE_NAMES + SCOPE_DIRS
-          SCOPE_NAMES=()
-          declare -A SCOPE_DIRS=()
-          SCOPED_DIRS=""
-          if [ -n "${SCOPES_INPUT//[[:space:]]/}" ]; then
-            mapfile -t SCOPE_NAMES < <(printf '%s' "$SCOPES_INPUT" | yq 'keys | .[]')
-            for s in "${SCOPE_NAMES[@]}"; do
-              raw=$(printf '%s' "$SCOPES_INPUT" | yq ".\"$s\"")
-              [ "$raw" = "null" ] && raw=""
-              clean=$(printf '%s\n' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF')
-              SCOPE_DIRS["$s"]="$clean"
-              SCOPED_DIRS=$(printf '%s\n%s' "$SCOPED_DIRS" "$clean")
-            done
-          fi
-          SCOPED_DIRS=$(printf '%s\n' "$SCOPED_DIRS" | awk 'NF' | sort -u)
-
-          # Parse the per-directory version-code offsets (if provided).
-          declare -A DIR_OFFSETS=()
-          if [ -n "${OFFSETS_INPUT//[[:space:]]/}" ]; then
-            while IFS= read -r d; do
-              [ -z "$d" ] && continue
-              off=$(printf '%s' "$OFFSETS_INPUT" | yq ".\"$d\"")
-              [ "$off" = "null" ] && off=0
-              DIR_OFFSETS["$d"]="$off"
-            done < <(printf '%s' "$OFFSETS_INPUT" | yq 'keys | .[]')
-          fi
-
-          # Catch-all dirs from fastlane-changelog-dirs receive all commits unfiltered.
-          # A dir present in both inputs is treated as a catch-all.
-          CATCHALL_DIRS=$(printf '%s\n' "$OUT_DIRS" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | awk 'NF' | sort -u)
-          ALL_DIRS=$(printf '%s\n%s\n' "$SCOPED_DIRS" "$CATCHALL_DIRS" | awk 'NF' | sort -u)
-
-          echo "Catch-all dirs:"
-          [ -n "$CATCHALL_DIRS" ] && printf '  %s\n' $CATCHALL_DIRS || echo "  (none)"
-          echo "Scope-filtered dirs:"
-          if [ ${#SCOPE_NAMES[@]} -gt 0 ]; then
-            for s in "${SCOPE_NAMES[@]}"; do
-              echo "  scope '$s':"
-              printf '    %s\n' ${SCOPE_DIRS[$s]}
-            done
-          else
-            echo "  (none)"
-          fi
-
-          format_notes() {
-            local input="$1"
-            local out
-            out=$(printf '%s\n' "$input" \
-              | sed -E 's/ *\(\[[0-9a-f]+\]\([^)]+\)\)//g' \
-              | sed -E 's/[,;]?[[:space:]]+(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]+(\[#[0-9]+\]\([^)]+\)|#[0-9]+)//gi' \
-              | sed -E 's/^\* \*\*[^*]+:\*\* */- /; s/^\* /- /' \
-              | sed 's/^### //' \
-              | sed '/^[[:space:]]*$/d')
-            # strip leading + trailing blank lines
-            out=$(printf '%s' "$out" | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba;}')
-            printf '%s' "$out"
-          }
-
-          truncate_notes() {
-            local notes="$1"
-            if [ ${#notes} -gt "$MAX_LENGTH" ]; then
-              local budget=$((MAX_LENGTH - ${#TRAILER}))
-              notes="${notes:0:$budget}"
-              notes=$(printf '%s' "$notes" | sed '$d')
-              notes="${notes}${TRAILER}"
-            fi
-            printf '%s' "$notes"
-          }
-
-          # Write per-directory
-          while IFS= read -r dir; do
-            [ -z "$dir" ] && continue
-
-            is_catchall=0
-            if printf '%s\n' "$CATCHALL_DIRS" | grep -Fxq "$dir"; then
-              is_catchall=1
-            fi
-
-            exclude_alt=""
-            if [ "$is_catchall" -eq 0 ] && [ ${#SCOPE_NAMES[@]} -gt 0 ]; then
-              for s in "${SCOPE_NAMES[@]}"; do
-                if ! printf '%s\n' "${SCOPE_DIRS[$s]}" | grep -Fxq "$dir"; then
-                  if [ -z "$exclude_alt" ]; then
-                    exclude_alt="$s"
-                  else
-                    exclude_alt="$exclude_alt|$s"
-                  fi
-                fi
-              done
-            fi
-
-            filtered="$RAW_NOTES"
-            if [ -n "$exclude_alt" ]; then
-              filtered=$(printf '%s\n' "$RAW_NOTES" | grep -vE "^\* \*\*($exclude_alt)[^*]*:\*\*" || true)
-            fi
-
-            notes=$(format_notes "$filtered")
-            [ -z "$notes" ] && notes="Release $VERSION"
-            notes=$(truncate_notes "$notes")
-
-            file_code=$((CODE + ${DIR_OFFSETS[$dir]:-0}))
-
-            mkdir -p "$dir"
-            printf '%s\n' "$notes" > "$dir/$file_code.txt"
-            if [ "$is_catchall" -eq 1 ]; then
-              echo "Wrote $dir/$file_code.txt (${#notes} chars, catch-all)"
-            else
-              echo "Wrote $dir/$file_code.txt (${#notes} chars, excluded scopes: ${exclude_alt:-none})"
-            fi
-          done <<< "$ALL_DIRS"
+          mkdir -p "$CHANGELOG_DIR"
+          cp "$SOURCE" "$CHANGELOG_DIR/$CODE.txt"
+          echo "Copied $SOURCE → $CHANGELOG_DIR/$CODE.txt"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
+          git add "$CHANGELOG_DIR"
           if git diff --cached --quiet; then
             echo "No changelog changes."
           else

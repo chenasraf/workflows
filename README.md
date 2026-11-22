@@ -8,7 +8,8 @@ A collection of reusable GitHub Actions workflows.
   - [Go Release](#go-release-go-releaseyml)
   - [Homebrew Release](#homebrew-release-homebrew-releaseyml)
   - [Manual Homebrew Release](#manual-homebrew-release-manual-homebrew-releaseyml)
-  - [Release Please + Fastlane Changelog](#release-please--fastlane-changelog-release-please-fastlane-changelogyml)
+  - [Release Please + F-Droid Changelog](#release-please--f-droid-changelog-release-please-fdroid-changelogyml)
+  - [Release Notes Check](#release-notes-check-release-notes-checkyml)
 - [Nextcloud Workflows](#nextcloud-workflows)
   - [PHPUnit MySQL](#phpunit-mysql-nextcloud-phpunit-mysqlyml)
   - [PHPUnit PostgreSQL](#phpunit-postgresql-nextcloud-phpunit-pgsqlyml)
@@ -170,51 +171,25 @@ jobs:
 
 ---
 
-### Release Please + Fastlane Changelog (`release-please-fastlane-changelog.yml`)
+### Release Please + F-Droid Changelog (`release-please-fdroid-changelog.yml`)
 
 Runs [release-please](https://github.com/googleapis/release-please), then when a release PR is
-created or updated, extracts the changelog for the current version from `CHANGELOG.md`, formats it
-for the Play Store (stripped of markdown links, commit hashes, etc.), truncates to the 500-char
-limit, and writes it to one or more fastlane metadata directories. The changelog is amended into
-release-please's commit so the tagged release includes the file.
-
-#### Features
-
-- Runs release-please with configurable release type
-- Extracts version-specific notes from `CHANGELOG.md`
-- Strips commit links, reformats bullets, removes markdown headers
-- Truncates to Play Store's 500-char limit with a configurable trailer
-- Writes to multiple output directories (e.g. Android + iOS fastlane metadata)
-- Amends the release-please commit (no extra commits in the PR)
-- Forwards `release_created`, `tag_name`, and `version` outputs
+created or updated, copies the curated notes for the PR's version (`release-notes/<version>/play.txt`
+by default) to `<changelog-dir>/<versionCode>.txt`, where F-Droid reads them from the tagged source.
+The file is amended into release-please's commit, so the tag carries it. When the notes don't exist
+yet, nothing is copied; pair it with [Release Notes Check](#release-notes-check-release-notes-checkyml)
+to keep the release PR from merging without them.
 
 #### Usage
 
 ```yaml
-name: CI/CD
-
-on:
-  push:
-    branches: [master]
-
 jobs:
   release-please:
-    uses: chenasraf/workflows/.github/workflows/release-please-fastlane-changelog.yml@master
+    uses: chenasraf/workflows/.github/workflows/release-please-fdroid-changelog.yml@fastlane-latest
     with:
       release-type: dart
-```
-
-With multiple output directories (Android + iOS):
-
-```yaml
-jobs:
-  release-please:
-    uses: chenasraf/workflows/.github/workflows/release-please-fastlane-changelog.yml@master
-    with:
-      release-type: dart
-      fastlane-changelog-dirs: |
-        fastlane/metadata/android/en-US/changelogs
-        fastlane/metadata/ios/en-US/changelogs
+    secrets:
+      token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
   build:
     needs: release-please
@@ -224,28 +199,71 @@ jobs:
 
 #### Inputs
 
-| Input                      | Description                                                        | Required | Default                                          |
-| -------------------------- | ------------------------------------------------------------------ | -------- | ------------------------------------------------ |
-| `release-type`             | Release Please release type (`dart`, `node`, `python`, `go`, etc.) | Yes      | -                                                |
-| `version-file`             | File containing the version string                                 | No       | `pubspec.yaml`                                   |
-| `changelog-file`           | Path to the CHANGELOG.md file                                      | No       | `CHANGELOG.md`                                   |
-| `fastlane-changelog-dirs`  | Newline-separated list of output directories                       | No       | `fastlane/metadata/android/en-US/changelogs`     |
-| `max-length`               | Maximum changelog length in characters                             | No       | `500`                                            |
-| `truncation-trailer`       | Text appended when the changelog is truncated                      | No       | `\n\n… see full notes on GitHub.`                |
+| Input           | Description                                                        | Required | Default                                      |
+| --------------- | ------------------------------------------------------------------ | -------- | -------------------------------------------- |
+| `release-type`  | Release Please release type (`dart`, `node`, `python`, `go`, etc.) | Yes      | -                                            |
+| `version-file`  | pubspec-style file holding `version: <name>+<code>`                | No       | `pubspec.yaml`                               |
+| `notes-file`    | Notes to copy; `{version}` is replaced with the version name       | No       | `release-notes/{version}/play.txt`           |
+| `changelog-dir` | Directory F-Droid reads changelogs from                            | No       | `fastlane/metadata/android/en-US/changelogs` |
 
 #### Secrets
 
-| Secret  | Description                                        | Required |
-| ------- | -------------------------------------------------- | -------- |
+| Secret  | Description                                                  | Required |
+| ------- | ------------------------------------------------------------ | -------- |
 | `token` | GitHub token for release-please (defaults to `GITHUB_TOKEN`) | No       |
 
 #### Outputs
 
-| Output            | Description                  |
-| ----------------- | ---------------------------- |
+| Output            | Description                   |
+| ----------------- | ----------------------------- |
 | `release_created` | Whether a release was created |
 | `tag_name`        | The release tag name          |
 | `version`         | The release version           |
+
+---
+
+### Release Notes Check (`release-notes-check.yml`)
+
+Checks that `release-notes/<version>/` holds complete curated notes: `full.md` plus one file per
+destination in `release-notes/config.yml`, each non-empty, within its character limit, and without
+leftover template text (`<!-- … -->`).
+
+- `mode: pr` checks the release-please PR and passes on every other PR, so it can be a required
+  status check.
+- `mode: release` runs on pushes to the default branch. When the version file's version has no tag
+  yet, the push is the release and the notes must be complete; make tagging and publishing jobs
+  depend on it so a release PR merged past the check doesn't ship.
+
+#### Usage
+
+```yaml
+jobs:
+  release-notes:
+    uses: chenasraf/workflows/.github/workflows/release-notes-check.yml@release-notes-latest
+    with:
+      mode: ${{ github.event_name == 'pull_request' && 'pr' || 'release' }}
+```
+
+`release-notes/config.yml`:
+
+```yaml
+version:
+  file: pubspec.yaml
+  pattern: '^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)' # ERE, version in group 1
+tag-prefix: v
+destinations:
+  play: { file: play.txt, limit: 500 }
+  ios: { file: ios.txt, limit: 4000 }
+  appstore: { file: appstore.md } # no limit: presence and template text only
+```
+
+#### Inputs
+
+| Input                   | Description                                  | Required | Default                    |
+| ----------------------- | -------------------------------------------- | -------- | -------------------------- |
+| `mode`                  | `pr` or `release`                            | Yes      | -                          |
+| `config`                | Path to the release notes config             | No       | `release-notes/config.yml` |
+| `release-branch-prefix` | Head branch prefix that marks the release PR | No       | `release-please--`         |
 
 ---
 
