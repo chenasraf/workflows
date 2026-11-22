@@ -1,0 +1,154 @@
+# Reusable Release Notes Check
+#
+# Verifies that `release-notes/<version>/` holds the curated notes for a
+# release: every destination named in the repo's `release-notes/config.yml`,
+# plus `full.md`, each non-empty, within its limit, and free of template text
+# (HTML comments, which the release-notes templates use for guidance).
+#
+# Two modes:
+#
+#   pr       Run on pull requests. Checks only the release-please PR (head
+#            branch starting with `release-branch-prefix`) and passes on every
+#            other PR, so it can be a required status check without blocking
+#            ordinary work.
+#
+#   release  Run on pushes to the default branch, before anything tags or
+#            publishes. When the version in the version file has no tag yet,
+#            the push is the release itself and the notes must be complete;
+#            otherwise it passes. This catches a release PR merged past the
+#            required check.
+#
+# The repo's config.yml supplies the version source and the destinations:
+#
+#   version:
+#     file: pubspec.yaml
+#     pattern: '^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)'   # ERE, group 1
+#   tag-prefix: v
+#   destinations:
+#     play: { file: play.txt, limit: 500 }
+#     ios:  { file: ios.txt,  limit: 4000 }
+#
+# A destination without `limit` is only checked for presence and template text.
+
+name: Release Notes Check
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "'pr' (release PR gate) or 'release' (guard before tagging/publishing)"
+        required: true
+        type: string
+      config:
+        description: 'Path to the release notes config'
+        required: false
+        type: string
+        default: 'release-notes/config.yml'
+      release-branch-prefix:
+        description: 'Head branch prefix that marks the release PR'
+        required: false
+        type: string
+        default: 'release-please--'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check release notes
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIG: ${{ inputs.config }}
+          PREFIX: ${{ inputs.release-branch-prefix }}
+          HEAD_REF: ${{ github.head_ref }}
+          LC_ALL: C.UTF-8
+        run: |
+          set -euo pipefail
+
+          case "$MODE" in
+            pr)
+              if [[ "$HEAD_REF" != "$PREFIX"* ]]; then
+                echo "Not a release PR ($HEAD_REF) — nothing to check."
+                exit 0
+              fi
+              ;;
+            release) ;;
+            *)
+              echo "::error::Unknown mode '$MODE' (expected 'pr' or 'release')."
+              exit 1
+              ;;
+          esac
+
+          if [ ! -f "$CONFIG" ]; then
+            echo "::error file=$CONFIG::Missing $CONFIG."
+            exit 1
+          fi
+
+          version_file=$(yq '.version.file' "$CONFIG")
+          version_pattern=$(yq '.version.pattern' "$CONFIG")
+          tag_prefix=$(yq '.["tag-prefix"] // "v"' "$CONFIG")
+          version=""
+          while IFS= read -r line; do
+            if [[ "$line" =~ $version_pattern ]]; then
+              version="${BASH_REMATCH[1]}"
+              break
+            fi
+          done < "$version_file"
+          if [ -z "$version" ]; then
+            echo "::error file=$version_file::No version matching '$version_pattern' in $version_file."
+            exit 1
+          fi
+
+          if [ "$MODE" = release ]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag_prefix}${version}" >/dev/null; then
+              echo "${tag_prefix}${version} is already tagged — not a release push."
+              exit 0
+            fi
+            echo "${tag_prefix}${version} is not tagged yet — this push releases it."
+          fi
+
+          dir="$(dirname "$CONFIG")/$version"
+          echo "Checking $dir"
+          failures=()
+
+          check_file() {
+            local path="$1" limit="$2"
+            if [ ! -f "$path" ]; then
+              failures+=("$path is missing")
+              return
+            fi
+            local text
+            text=$(cat "$path")
+            if [ -z "${text//[[:space:]]/}" ]; then
+              failures+=("$path is empty")
+              return
+            fi
+            if grep -q '<!--' "$path"; then
+              failures+=("$path still holds template text (<!-- … -->)")
+            fi
+            if [ -n "$limit" ] && [ "${#text}" -gt "$limit" ]; then
+              failures+=("$path is ${#text} characters, over its limit of $limit")
+            fi
+            echo "  $path: ${#text} chars${limit:+ (limit $limit)}"
+          }
+
+          check_file "$dir/full.md" ""
+          while IFS= read -r dest; do
+            [ -z "$dest" ] && continue
+            file=$(yq ".destinations.\"$dest\".file" "$CONFIG")
+            limit=$(yq ".destinations.\"$dest\".limit // \"\"" "$CONFIG")
+            check_file "$dir/$file" "$limit"
+          done < <(yq '.destinations | keys | .[]' "$CONFIG")
+
+          if [ ${#failures[@]} -gt 0 ]; then
+            for f in "${failures[@]}"; do
+              echo "::error::$f"
+            done
+            echo
+            echo "Release notes for $version are incomplete. Run /release-notes in this repo,"
+            echo "commit the result to the default branch, and this check reruns on the release PR."
+            exit 1
+          fi
+          echo "Release notes for $version are complete."
