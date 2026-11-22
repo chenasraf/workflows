@@ -3,7 +3,9 @@
 # Verifies that `release-notes/<version>/` holds the curated notes for a
 # release: every destination named in the repo's `release-notes/config.yml`,
 # plus `full.md`, each non-empty, within its limit, and free of template text
-# (HTML comments, which the release-notes templates use for guidance).
+# (HTML comments, which the release-notes templates use for guidance). Also
+# fails while `release-notes/next/` holds fragments, which the rendered notes
+# don't include yet.
 #
 # Two modes:
 #
@@ -134,6 +136,14 @@ jobs:
             echo "  $path: ${#text} chars${limit:+ (limit $limit)}"
           }
 
+          # A fragment still in next/ was committed after the notes were rendered,
+          # so the release would ship without it.
+          shopt -s nullglob
+          for fragment in "$(dirname "$CONFIG")"/next/*.md; do
+            failures+=("$fragment is not in the notes for $version yet")
+          done
+          shopt -u nullglob
+
           check_file "$dir/full.md" ""
           while IFS= read -r dest; do
             [ -z "$dest" ] && continue
@@ -147,8 +157,9 @@ jobs:
               echo "::error::$f"
             done
             echo
-            echo "Release notes for $version are incomplete. Run /release-notes in this repo,"
-            echo "commit the result to the default branch, and this check reruns on the release PR."
+            echo "Release notes for $version are incomplete. Write them in $dir, folding in any"
+            echo "fragments left in next/, commit to the default branch, and this check reruns"
+            echo "on the release PR."
             exit 1
           fi
           echo "Release notes for $version are complete."
