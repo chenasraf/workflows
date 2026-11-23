@@ -122,7 +122,10 @@ jobs:
               return
             fi
             local text
+            # Trimmed at both ends, as store upload tooling sends it.
             text=$(cat "$path")
+            text="${text#"${text%%[![:space:]]*}"}"
+            text="${text%"${text##*[![:space:]]}"}"
             if [ -z "${text//[[:space:]]/}" ]; then
               failures+=("$path is empty")
               return
